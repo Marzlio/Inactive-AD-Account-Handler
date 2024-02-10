@@ -23,13 +23,13 @@ Before running this script, ensure you have:
 
 1. **Download the Script**: Clone this repository or directly download the `Inactive-AD-Account-Handler.ps1` file.
 2. **Install Active Directory PowerShell Module**:
-   \`\`\`powershell
+   ```powershell
    Install-Module -Name ActiveDirectory
-   \`\`\`
+   ```
 3. **Set Execution Policy**: Enable script execution with:
-   \`\`\`powershell
+   ```powershell
    Set-ExecutionPolicy RemoteSigned
-   \`\`\`
+   ```
 
 ## Configuration
 
@@ -44,9 +44,9 @@ Customize the script's behavior by modifying parameters within the `$Config` has
 
 Execute the script in PowerShell with administrative privileges. You can run the script with default settings or specify parameters for customization:
 
-\`\`\`powershell
+```powershell
 .\Inactive-AD-Account-Handler.ps1 -DisableThresholdDays 30 -LogChanges
-\`\`\`
+```
 
 ### Parameters
 
