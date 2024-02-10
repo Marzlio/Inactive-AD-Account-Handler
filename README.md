@@ -38,7 +38,6 @@ Customize the script's behavior by modifying parameters within the `$Config` has
 - `Domain`, `ExcludeOU`, `TargetOU`: Define LDAP paths for the domain and organizational units.
 - `SMTPServer`, `FromEmail`, `ToEmail`: Set up email notification details.
 - `DisableThresholdDays`: Define the inactivity threshold for disabling accounts.
-- `ReadOnlyMode`: Enable or disable changes to AD for testing purposes.
 
 ## Detailed Usage
 
@@ -52,7 +51,8 @@ Execute the script in PowerShell with administrative privileges. You can run the
 
 - `-Domain <string>`: LDAP path for the domain.
 - `-ExcludeOU <string>`: OU to exclude from processing.
-- Additional parameters include `SMTPServer`, `FromEmail`, `ToEmail`, and `ReadOnlyMode` for detailed control over script operation.
+- Additional parameters include `SMTPServer`, `FromEmail`, and `ToEmail` for detailed control over script operation.
+- `WhatIf`: Simulate script execution without making changes.
 
 ## Troubleshooting
 
