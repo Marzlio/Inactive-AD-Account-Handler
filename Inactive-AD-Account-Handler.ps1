@@ -1,28 +1,86 @@
-# Import required modules
+# Define Configuration Parameters with Default Values
+param (
+    [string]$Domain = "DC=yourdomain,DC=com",
+    [string]$ExcludeOU = "OU=Special Users,DC=yourdomain,DC=com",
+    [string]$TargetOU = "OU=Inactive Users,DC=yourdomain,DC=com",
+    [string]$SMTPServer = "smtp.yourdomain.com",
+    [string]$FromEmail = "admin@yourdomain.com",
+    [string]$ToEmail = "it-support@yourdomain.com",
+    [string]$EmailSubject = "Accounts Disable Report and Error Log",
+    [string]$AccountsReportCSV = "C:\Powershell\Reports\accounts_to_disable_report.csv",
+    [string]$TempCSV = "C:\Powershell\Temp\onprem_lastlogon.csv",
+    [int]$DisableThresholdDays = 15,
+    [bool]$ReadOnlyMode = $false,
+    [bool]$DeleteErrorLogs = $false,
+    [bool]$LogChanges = $true,
+    [string]$LogFileExtension = ".log",
+    [string]$ErrorLogBasePath = "C:\Powershell\Logs\error",
+    [string]$ChangesLogBasePath = "C:\Powershell\Logs\changes",
+    [switch]$Help
+)
+
+# Import Required Modules
 Import-Module ActiveDirectory
 
-# Define configuration parameters
 $Config = @{
-    OUsToInclude                = @("DC=yourdomain,DC=com")
-    OUsToExclude                = @("OU=Special Users,DC=yourdomain,DC=com")
-    TargetOU                    = "OU=Inactive Users,DC=yourdomain,DC=com"
-    SMTPServer                  = "smtp.yourdomain.com"
-    FromEmail                   = "admin@yourdomain.com"
-    ToEmail                     = "it-support@yourdomain.com"
-    EmailSubject                = "Accounts Disable Report and Error Log"
-    AccountsReportCSV           = "C:\Powershell\Reports\accounts_to_disable_report.csv"
-    TempCSV                     = "C:\Powershell\Temp\onprem_lastlogon.csv"
-    DisableThresholdDays        = 15
-    ReadOnlyMode                = $true
-    DomainControllersToExclude  = @()
-    DeleteErrorLogs             = $false
-    LogChanges                  = $false
-    LogFileExtension            = ".log"
-    ErrorLogBasePath            = "C:\Powershell\Logs\error"
-    ChangesLogBasePath          = "C:\Powershell\Logs\changes"
+    OUsToInclude           = @($Domain)
+    OUsToExclude           = @($ExcludeOU)
+    TargetOU               = $TargetOU
+    SMTPServer             = $SMTPServer
+    FromEmail              = $FromEmail
+    ToEmail                = $ToEmail
+    EmailSubject           = $EmailSubject
+    AccountsReportCSV      = $AccountsReportCSV
+    TempCSV                = $TempCSV
+    DisableThresholdDays   = $DisableThresholdDays
+    ReadOnlyMode           = $ReadOnlyMode
+    DomainControllersToExclude = @()
+    DeleteErrorLogs        = $DeleteErrorLogs
+    LogChanges             = $LogChanges
+    LogFileExtension       = $LogFileExtension
+    ErrorLogBasePath       = $ErrorLogBasePath
+    ChangesLogBasePath     = $ChangesLogBasePath
 }
 
-# Initialize-LogFile function
+if ($Help) {
+    Write-Host "Usage: .\inactive-AD-Account-handler.ps1 [-Domain <string>] [-ExcludeOU <string>] [-TargetOU <string>] [-SMTPServer <string>] ..."
+    Write-Host "       [-FromEmail <string>] [-ToEmail <string>] [-EmailSubject <string>] [-AccountsReportCSV <string>]"
+    Write-Host "       [-TempCSV <string>] [-DisableThresholdDays <int>] [-ReadOnlyMode] [-DeleteErrorLogs] ..."
+    Write-Host "       [-LogChanges] [-LogFileExtension <string>] [-ErrorLogBasePath <string>] [-ChangesLogBasePath <string>]"
+    Write-Host "       [-Help]"
+    Write-Host ""
+    Write-Host "Description:"
+    Write-Host "This script identifies inactive user accounts in Active Directory, disables those accounts, moves them to a designated OU, and emails a report of the actions taken."
+    Write-Host ""
+    Write-Host "Parameters:"
+    Write-Host "-Domain <string>: Specifies the LDAP path to the domain. Default is 'DC=yourdomain,DC=com'."
+    Write-Host "-ExcludeOU <string>: LDAP path to an organizational unit (OU) that contains users who should not be processed. Default is 'OU=Special Users,DC=yourdomain,DC=com'."
+    Write-Host "-TargetOU <string>: LDAP path to the OU where inactive accounts will be moved. Default is 'OU=Inactive Users,DC=yourdomain,DC=com'."
+    Write-Host "-SMTPServer <string>: Address of the SMTP server used to send the email report. Default is 'smtp.yourdomain.com'."
+    Write-Host "-FromEmail <string>: Email address that will appear as the sender of the report. Default is 'admin@yourdomain.com'."
+    Write-Host "-ToEmail <string>: Email address to which the report will be sent. Default is 'it-support@yourdomain.com'."
+    Write-Host "-EmailSubject <string>: Subject line for the email report. Default is 'Accounts Disable Report and Error Log'."
+    Write-Host "-AccountsReportCSV <string>: File path where the report of accounts to be disabled will be saved. Default is 'C:\\Powershell\\Reports\\accounts_to_disable_report.csv'."
+    Write-Host "-TempCSV <string>: Temporary CSV file path used during processing. Default is 'C:\\Powershell\\Temp\\onprem_lastlogon.csv'."
+    Write-Host "-DisableThresholdDays <int>: Number of days of inactivity before an account is considered inactive. Default is 15."
+    Write-Host "-ReadOnlyMode: If specified, the script runs in read-only mode without making any changes to Active Directory."
+    Write-Host "-DeleteErrorLogs: If specified, existing error logs will be deleted at the start of the script run. Not specifying this keeps existing logs."
+    Write-Host "-LogChanges: If specified, changes made by the script will be logged."
+    Write-Host "-LogFileExtension <string>: The file extension to use for log files. Default is '.log'."
+    Write-Host "-ErrorLogBasePath <string>: Base file path for error logs. Default is 'C:\\Powershell\\Logs\\error'."
+    Write-Host "-ChangesLogBasePath <string>: Base file path for change logs. Default is 'C:\\Powershell\\Logs\\changes'."
+    Write-Host ""
+    Write-Host "Examples:"
+    Write-Host ".\inactive-AD-Account-handler.ps1 -ReadOnlyMode -LogChanges"
+    Write-Host "Runs the script in read-only mode to report what would be changed without actually disabling or moving any accounts."
+    Write-Host ""
+    Write-Host ".\inactive-AD-Account-handler.ps1 -DisableThresholdDays 30"
+    Write-Host "Runs the script with a custom threshold of 30 days of inactivity before disabling accounts."
+    exit
+}
+
+
+# Initialize Log Files
 function Initialize-LogFile {
     param (
         [string]$BasePath,
@@ -32,27 +90,11 @@ function Initialize-LogFile {
     )
     $timestamp = Get-Date -Format "yyyyMMddHHmmss"
     $fileName = if ($CreateNew) { "$BasePath$Type_$timestamp$Extension" } else { "$BasePath$Type$Extension" }
-
     return $fileName
 }
 
-# Initialize log files based on configuration
 $Config.ErrorLogFile = Initialize-LogFile -BasePath $Config.ErrorLogBasePath -Extension $Config.LogFileExtension -CreateNew (-not $Config.DeleteErrorLogs) -Type "Error"
-if ($Config.LogChanges) {
-    $Config.ChangesLogFile = Initialize-LogFile -BasePath $Config.ChangesLogBasePath -Extension $Config.LogFileExtension -CreateNew $true -Type "Change"
-} else {
-    $Config.ChangesLogFile = $null
-}
-
-# Log-Change function
-function Log-Change {
-    param(
-        [string]$message
-    )
-    if ($Config.LogChanges -and $Config.ChangesLogFile) {
-        Add-Content -Path $Config.ChangesLogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - $message"
-    }
-}
+$Config.ChangesLogFile = Initialize-LogFile -BasePath $Config.ChangesLogBasePath -Extension $Config.LogFileExtension -CreateNew $true -Type "Change"
 
 # Function to check if a user is in an excluded OU
 function IsUserInExcludedOUs {
@@ -67,8 +109,6 @@ function IsUserInExcludedOUs {
     }
     return $false
 }
-
-
 # Function to get domain users with their last logon
 function Get-DomainUsersWithLastLogon {
     param(
@@ -177,10 +217,29 @@ function Send-Email {
     $smtpClient.Send($message)
 }
 
-# Script execution steps
-$csvPath = Get-DomainUsersWithLastLogon -config $Config
-Disable-AndMoveADUsers -csvPath $csvPath -config $Config
-Send-Email -config $Config -attachmentPaths @($Config.ErrorLogFile, $Config.AccountsReportCSV)
+# Validate configuration before proceeding
+function Validate-Config {
+    param([hashtable]$config)
+    if (-not (Test-Path $config.AccountsReportCSV)) {
+        throw "AccountsReportCSV path is invalid or inaccessible."
+    }
+    # Additional validations can be added here
+}
 
-# Cleanup
-Remove-Item $Config.TempCSV -ErrorAction SilentlyContinue
+# Implement centralized error handling
+try {
+    # Validate configuration
+    Validate-Config -config $Config
+
+    # Main script execution
+    $csvPath = Get-DomainUsersWithLastLogon -config $Config
+    Disable-AndMoveADUsers -csvPath $csvPath -config $Config
+    Send-Email -config $Config -attachmentPaths @($Config.ErrorLogFile, $Config.AccountsReportCSV)
+} catch {
+    # Log error
+    Add-Content -Path $Config.ErrorLogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - An unexpected error occurred: $($_.Exception.Message)"
+    Write-Host "An error occurred. Please check the error log at $($Config.ErrorLogFile) for more details."
+} finally {
+    # Cleanup
+    Remove-Item $Config.TempCSV -ErrorAction SilentlyContinue
+}
