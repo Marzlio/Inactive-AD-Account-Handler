@@ -10,12 +10,12 @@ param (
     [string]$AccountsReportCSV = "C:\Powershell\Reports\accounts_to_disable_report.csv",
     [string]$TempCSV = "C:\Powershell\Temp\onprem_lastlogon.csv",
     [int]$DisableThresholdDays = 15,
-    [bool]$ReadOnlyMode = $false,
     [bool]$DeleteErrorLogs = $false,
     [bool]$LogChanges = $true,
     [string]$LogFileExtension = ".log",
     [string]$ErrorLogBasePath = "C:\Powershell\Logs\error",
     [string]$ChangesLogBasePath = "C:\Powershell\Logs\changes",
+    [string]$DomainControllersToExclude = @(),
     [switch]$Help
 )
 
@@ -24,7 +24,7 @@ Import-Module ActiveDirectory
 
 $Config = @{
     OUsToInclude           = @($Domain)
-    OUsToExclude           = @($ExcludeOUs)
+    OUsToExclude           = $ExcludeOUs
     TargetOU               = $TargetOU
     SMTPServer             = $SMTPServer
     FromEmail              = $FromEmail
@@ -33,8 +33,7 @@ $Config = @{
     AccountsReportCSV      = $AccountsReportCSV
     TempCSV                = $TempCSV
     DisableThresholdDays   = $DisableThresholdDays
-    ReadOnlyMode           = $ReadOnlyMode
-    DomainControllersToExclude = @()
+    DomainControllersToExclude = $DomainControllersToExclude
     DeleteErrorLogs        = $DeleteErrorLogs
     LogChanges             = $LogChanges
     LogFileExtension       = $LogFileExtension
@@ -45,7 +44,7 @@ $Config = @{
 if ($Help) {
     Write-Host "Usage: .\inactive-AD-Account-handler.ps1 [-Domain <string>] [-ExcludeOU <string>] [-TargetOU <string>] [-SMTPServer <string>] ..."
     Write-Host "       [-FromEmail <string>] [-ToEmail <string>] [-EmailSubject <string>] [-AccountsReportCSV <string>]"
-    Write-Host "       [-TempCSV <string>] [-DisableThresholdDays <int>] [-ReadOnlyMode] [-DeleteErrorLogs] ..."
+    Write-Host "       [-TempCSV <string>] [-DisableThresholdDays <int>] [-DeleteErrorLogs] ..."
     Write-Host "       [-LogChanges] [-LogFileExtension <string>] [-ErrorLogBasePath <string>] [-ChangesLogBasePath <string>]"
     Write-Host "       [-Help]"
     Write-Host ""
@@ -63,7 +62,6 @@ if ($Help) {
     Write-Host "-AccountsReportCSV <string>: File path where the report of accounts to be disabled will be saved. Default is 'C:\\Powershell\\Reports\\accounts_to_disable_report.csv'."
     Write-Host "-TempCSV <string>: Temporary CSV file path used during processing. Default is 'C:\\Powershell\\Temp\\onprem_lastlogon.csv'."
     Write-Host "-DisableThresholdDays <int>: Number of days of inactivity before an account is considered inactive. Default is 15."
-    Write-Host "-ReadOnlyMode: If specified, the script runs in read-only mode without making any changes to Active Directory."
     Write-Host "-DeleteErrorLogs: If specified, existing error logs will be deleted at the start of the script run. Not specifying this keeps existing logs."
     Write-Host "-LogChanges: If specified, changes made by the script will be logged."
     Write-Host "-LogFileExtension <string>: The file extension to use for log files. Default is '.log'."
@@ -71,7 +69,6 @@ if ($Help) {
     Write-Host "-ChangesLogBasePath <string>: Base file path for change logs. Default is 'C:\\Powershell\\Logs\\changes'."
     Write-Host ""
     Write-Host "Examples:"
-    Write-Host ".\inactive-AD-Account-handler.ps1 -ReadOnlyMode -LogChanges"
     Write-Host "Runs the script in read-only mode to report what would be changed without actually disabling or moving any accounts."
     Write-Host ""
     Write-Host ".\inactive-AD-Account-handler.ps1 -DisableThresholdDays 30"
@@ -166,32 +163,25 @@ function Get-DomainUsersWithLastLogon {
 
 # Function to disable and move AD users
 function Disable-AndMoveADUsers {
+    [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [string]$csvPath,
         [hashtable]$config
     )
-    if ($config.ReadOnlyMode -eq $true) {
-        Write-Host "Running in read-only mode. No accounts will be disabled or moved."
-        return
-    }
 
     $disableDate = (Get-Date).AddDays(-$config.DisableThresholdDays)
     $accountsToDisable = Import-Csv -Path $csvPath | Where-Object {([DateTime]::Parse($_.LastLogon) -lt $disableDate)}
 
     foreach ($account in $accountsToDisable) {
-        try {
-            $user = Get-ADUser -Identity $account.SamAccountName
+        $user = Get-ADUser -Identity $account.SamAccountName -Properties *
+        if ($PSCmdlet.ShouldProcess($user.Name, "Disable and move")) {
             Disable-ADAccount -Identity $user
-            Log-Change -message "Disabled account: $($account.SamAccountName)"
             Move-ADObject -Identity $user.DistinguishedName -TargetPath $config.TargetOU
-            Log-Change -message "Moved account: $($account.SamAccountName)to $($config.TargetOU)"
+            Log-Change -message "Disabled account: $($account.SamAccountName)"
+            Log-Change -message "Moved account: $($account.SamAccountName) to $($config.TargetOU)"
             Write-Host "Disabled and moved $($account.SamAccountName) to $($config.TargetOU)"
         }
-        catch {
-            Add-Content -Path $config.ErrorLogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Error retrieving last logon for $($user.SamAccountName) from $($dc.HostName): $($_.Exception.Message)"
-        }
     }
-    $accountsToDisable | Select-Object SamAccountName, LastLogon | Export-Csv -Path $config.AccountsReportCSV -NoTypeInformation
 }
 
 # Function to send an email
