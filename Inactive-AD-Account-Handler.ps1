@@ -1,7 +1,7 @@
 # Define Configuration Parameters with Default Values
 param (
     [string]$Domain = "DC=yourdomain,DC=com",
-    [string]$ExcludeOU = "OU=Special Users,DC=yourdomain,DC=com",
+    [string]$ExcludeOUs = @("OU=Special Users,DC=yourdomain,DC=com, OU=Special,DC=yourdomain,DC=com"),
     [string]$TargetOU = "OU=Inactive Users,DC=yourdomain,DC=com",
     [string]$SMTPServer = "smtp.yourdomain.com",
     [string]$FromEmail = "admin@yourdomain.com",
@@ -24,7 +24,7 @@ Import-Module ActiveDirectory
 
 $Config = @{
     OUsToInclude           = @($Domain)
-    OUsToExclude           = @($ExcludeOU)
+    OUsToExclude           = @($ExcludeOUs)
     TargetOU               = $TargetOU
     SMTPServer             = $SMTPServer
     FromEmail              = $FromEmail
