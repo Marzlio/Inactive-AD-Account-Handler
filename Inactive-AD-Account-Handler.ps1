@@ -2,13 +2,30 @@
 $configPath = "config.psd1"
 $Config = Import-PowerShellDataFile -Path $configPath
 
+# Check Execution Policy
+$currentPolicy = Get-ExecutionPolicy
+if ($currentPolicy -eq 'Restricted' -or $currentPolicy -eq 'AllSigned') {
+    Write-Host "Current execution policy is '$currentPolicy'. The script requires 'RemoteSigned' or a less restrictive policy to run."
+    Write-Host "Please change the execution policy to 'RemoteSigned' by running: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser"
+    exit
+}
+
+# Verify Active Directory Access
+try {
+    # Attempt to fetch a known AD user object as a test
+    $testUser = Get-ADUser -Filter 'Name -like "Test User"' -ErrorAction Stop
+    Write-Host "Active Directory access verified."
+} catch {
+    Write-Host "Failed to access Active Directory. Please ensure the script is run with appropriate permissions."
+    exit
+}
+
 # Determine the script's directory
 $scriptPath = $PSScriptRoot
 
 # Update configuration paths to be relative to the script's directory
 $Config['ReportsPath'] = Join-Path -Path $scriptPath -ChildPath "Reports"
 $Config['LogsPath'] = Join-Path -Path $scriptPath -ChildPath "Logs"
-
 
 # Ensure the folder structure exists for reports and logs
 $paths = @($Config.ReportsPath, $Config.LogsPath)
