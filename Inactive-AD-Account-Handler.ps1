@@ -39,24 +39,32 @@ function IsUserInExcludedOUs {
 function Get-ADUsers {
     param([hashtable]$config)
 
+    $generalLogPath = $config.GeneralLogPath
+    Write-GeneralLog -Message "Starting to fetch AD users from specified OUs." -Path $generalLogPath
+
     $allUsers = @()
     foreach ($ou in $config.OUsToInclude) {
         try {
             $users = Get-ADUser -Filter {Enabled -eq $true} -SearchBase $ou -Properties SamAccountName, DistinguishedName, LastLogonTimestamp, PasswordNeverExpires
             $allUsers += $users
+            Write-GeneralLog -Message "Fetched users from OU: $ou" -Path $generalLogPath
         } catch {
+            Write-ErrorLog -Message "Failed to fetch users from OU: $ou. Error: $_" -Path $config.ErrorLogPath
         }
     }
 
     return $allUsers
 }
 
+
 function Get-LastLogonFromAllDCs {
     param(
         [string]$userName
     )
 
-    # Fetch all domain controllers, excluding the ones specified in the config
+    $generalLogPath = $Config.GeneralLogPath
+    Write-GeneralLog -Message "Fetching last logon time for user: $userName from all Domain Controllers except exclusions." -Path $generalLogPath
+
     $domainControllers = Get-ADDomainController -Filter * | Where-Object {
         $Config.DomainControllersToExclude -notcontains $_.HostName -and
         $Config.DomainControllersToExclude -notcontains $_.Name
@@ -70,14 +78,15 @@ function Get-LastLogonFromAllDCs {
                 $lastLogon = $userLastLogon
             }
         } catch {
-            # Optionally log errors or take other actions when a DC is not accessible
+            Write-ErrorLog -Message "Failed to fetch last logon for $userName from DC: $($dc.HostName). Error: $_" -Path $Config.ErrorLogPath
         }
     }
 
     if ($lastLogon -eq 0) {
-        # Consider handling or logging the case where no logon data was found
+        Write-GeneralLog -Message "No logon data found for $userName." -Path $generalLogPath
     } else {
         $logonDate = [DateTime]::FromFileTime($lastLogon).ToString("yyyy-MM-dd HH:mm:ss")
+        Write-GeneralLog -Message "Latest logon for $userName is at $logonDate." -Path $generalLogPath
     }
 
     return $lastLogon
@@ -133,19 +142,33 @@ function Get-NeverLoggedOnADUsers {
         [array]$users
     )
 
-    $neverLoggedOnUsers = $users | Where-Object {
-        $_.LastLogonTimestamp -eq $null -and
-        -not (IsUserInExcludedOUs -distinguishedName $_.DistinguishedName -OUsToExclude $Config.OUsToExclude_NeverLoggedOnADUsers)
-    } | ForEach-Object {
-        [PSCustomObject]@{
-            SamAccountName    = $_.SamAccountName
-            DistinguishedName = $_.DistinguishedName
+    $generalLogPath = $Config.GeneralLogPath
+    $errorLogPath = $Config.ErrorLogPath
+
+    # Log the start of fetching users who have never logged on
+    Write-GeneralLog -Message "Starting to fetch users who have never logged on." -Path $generalLogPath
+
+    $neverLoggedOnUsers = @()
+
+    try {
+        $neverLoggedOnUsers = $users | Where-Object { $_.LastLogonTimestamp -eq $null } | ForEach-Object {
+            [PSCustomObject]@{
+                SamAccountName    = $_.SamAccountName
+                DistinguishedName = $_.DistinguishedName
+            }
         }
+
+        # Log the count of never logged on users found
+        $count = $neverLoggedOnUsers.Count
+        Write-GeneralLog -Message "$count users who have never logged on were found." -Path $generalLogPath
+
+    } catch {
+        # Log any errors encountered during the fetching process
+        Write-ErrorLog -Message "An error occurred while fetching users who have never logged on: $_" -Path $errorLogPath
     }
 
     return $neverLoggedOnUsers
 }
-
 
 # Function to get users with no password expiration
 function Get-UsersWithNoExpire {
@@ -153,14 +176,29 @@ function Get-UsersWithNoExpire {
         [array]$users
     )
 
-    $noExpireUsers = $users | Where-Object {
-        $_.PasswordNeverExpires -eq $true -and
-        -not (IsUserInExcludedOUs -distinguishedName $_.DistinguishedName -OUsToExclude $Config.OUsToExclude_UsersWithNoExpire)
-    } | ForEach-Object {
-        [PSCustomObject]@{
-            SamAccountName    = $_.SamAccountName
-            DistinguishedName = $_.DistinguishedName
+    $generalLogPath = $Config.GeneralLogPath
+    $errorLogPath = $Config.ErrorLogPath
+
+    # Log the start of fetching users with no expire set
+    Write-GeneralLog -Message "Starting to fetch users with non-expiring passwords." -Path $generalLogPath
+
+    $noExpireUsers = @()
+
+    try {
+        $noExpireUsers = $users | Where-Object { $_.PasswordNeverExpires -eq $true } | ForEach-Object {
+            [PSCustomObject]@{
+                SamAccountName    = $_.SamAccountName
+                DistinguishedName = $_.DistinguishedName
+            }
         }
+
+        # Log the count of users found
+        $count = $noExpireUsers.Count
+        Write-GeneralLog -Message "$count users with non-expiring passwords found." -Path $generalLogPath
+
+    } catch {
+        # Log any errors encountered during the process
+        Write-ErrorLog -Message "An error occurred while fetching users with non-expiring passwords: $_" -Path $errorLogPath
     }
 
     return $noExpireUsers
@@ -172,15 +210,48 @@ function Cleanup-OldReports {
         [int]$retentionCount
     )
 
+    $generalLogPath = $Config.GeneralLogPath
+    $errorLogPath = $Config.ErrorLogPath
+
+    # Log the start of the cleanup process
+    Write-GeneralLog -Message "Starting cleanup of old reports." -Path $generalLogPath
+
     $allReports = Get-ChildItem -Path $reportsPath -Filter "*.csv" | Sort-Object LastWriteTime -Descending
+
     if ($allReports.Count -gt $retentionCount) {
         $oldReports = $allReports[$retentionCount..($allReports.Count - 1)]
         foreach ($report in $oldReports) {
-            Remove-Item -Path $report.FullName -Force
+            try {
+                Remove-Item -Path $report.FullName -Force
+                # Log successful deletion
+                Write-GeneralLog -Message "Deleted old report: $($report.Name)" -Path $generalLogPath
+            } catch {
+                # Log any errors encountered during deletion
+                Write-ErrorLog -Message "Failed to delete old report: $($report.Name). Error: $_" -Path $errorLogPath
+            }
         }
+    } else {
+        Write-GeneralLog -Message "No old reports to delete. Retention count is set to $retentionCount." -Path $generalLogPath
     }
 }
 
+function Write-GeneralLog {
+    param(
+        [string]$Message,
+        [string]$Path
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$timestamp - $Message" | Out-File -FilePath $Path -Append -Encoding UTF8
+}
+
+function Write-ErrorLog {
+    param(
+        [string]$Message,
+        [string]$Path
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$timestamp - ERROR - $Message" | Out-File -FilePath $Path -Append -Encoding UTF8
+}
 
 # Function to send an email
 function Send-Email {
@@ -189,8 +260,16 @@ function Send-Email {
         [string]$reportsPath
     )
 
+    $generalLogPath = $config.GeneralLogPath
+    $errorLogPath = $config.ErrorLogPath
 
-    if (-not $config.SMTPServer -or -not $config.FromEmail -or -not $config.ToEmail) {
+    # Start sending email log
+    Write-GeneralLog -Message "Starting to send email." -Path $generalLogPath
+
+    if (-not $config.SMTPServer) {
+        $message = "SMTPServer is not specified in the config. Email will not be sent."
+        Write-GeneralLog -Message $message -Path $generalLogPath
+        Write-Host $message
         return
     }
 
@@ -198,42 +277,31 @@ function Send-Email {
     $message.From = $config.FromEmail
     $message.To.Add($config.ToEmail)
     $message.Subject = $config.EmailSubject
-    $message.Body = "Please find the attached error log and accounts disable report. Attached is the most recent report for each category."
+    $message.Body = "Please find the attached reports for disabled accounts and error logs."
 
-    # Define report types to search for
-    $reportTypes = @("last_logon_users_", "never_logged_on_users_", "no_expire_users_")
-
-    foreach ($reportType in $reportTypes) {
-        $latestReport = Get-ChildItem -Path $reportsPath -Filter "$reportType*.csv" |
-                        Sort-Object LastWriteTime -Descending |
-                        Select-Object -First 1
-
-        if ($latestReport) {
-            $attachmentPath = $latestReport.FullName
-            $attachment = New-Object System.Net.Mail.Attachment -ArgumentList $attachmentPath
-            $message.Attachments.Add($attachment)
-        } else {
-        }
+    # Attach all reports generated by the script
+    $reportFiles = Get-ChildItem -Path $reportsPath -Filter "*.csv"
+    foreach ($file in $reportFiles) {
+        $attachment = New-Object System.Net.Mail.Attachment -ArgumentList $file.FullName
+        $message.Attachments.Add($attachment)
     }
 
     $smtpClient = New-Object System.Net.Mail.SmtpClient($config.SMTPServer, $config.SMTPPort)
     $smtpClient.EnableSsl = $config.UseSSL
 
-    # Check if SMTP authentication is required
     if ($config.SMTPUsername -and $config.SMTPPassword) {
-        # Assuming SMTPPassword is securely stored or encrypted and needs to be decrypted here
-        $securePassword = ConvertTo-SecureString $config.SMTPPassword -AsPlainText -Force
-        $credentials = New-Object System.Net.NetworkCredential($config.SMTPUsername, $securePassword)
-        $smtpClient.Credentials = $credentials
+        $smtpClient.Credentials = New-Object System.Net.NetworkCredential($config.SMTPUsername, $config.SMTPPassword)
     }
 
     try {
         $smtpClient.Send($message)
-    }
-    catch {
-    }
-    finally {
-        $smtpClient.Dispose()
+        $successMessage = "Email sent successfully."
+        Write-GeneralLog -Message $successMessage -Path $generalLogPath
+        Write-Host $successMessage
+    } catch {
+        $errorMessage = "Failed to send email. Error: $_"
+        Write-ErrorLog -Message $errorMessage -Path $errorLogPath
+        Write-Host $errorMessage
     }
 }
 
@@ -243,8 +311,8 @@ $neverLoggedOnUsers = Get-NeverLoggedOnADUsers -users $allUsers
 $noExpireUsers = Get-UsersWithNoExpire -users $allUsers
 
 
-# Current date in a specific format (e.g., YYYY-MM-DD)
-$currentDate = Get-Date -Format "yyyy-MM-dd"
+# Get current date and time in a filesystem-friendly format
+$currentDateTime = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 
 # Process users who have not logged in within the threshold
 foreach ($user in $lastLogonUsers) {
@@ -292,14 +360,15 @@ if ($Config.DisableNeverLoggedOn) {
     }
 }
 
-
-# Exporting reports with date included in the filename
-$lastLogonReportPath = Join-Path -Path $Config['ReportsPath'] -ChildPath "last_logon_users_$currentDate.csv"
-$neverLoggedOnReportPath = Join-Path -Path $Config['ReportsPath'] -ChildPath "never_logged_on_users_$currentDate.csv"
-$noExpireReportPath = Join-Path -Path $Config['ReportsPath'] -ChildPath "no_expire_users_$currentDate.csv"
+# Setup report paths with date and time included in the filename
+$lastLogonReportPath = Join-Path -Path $Config['ReportsPath'] -ChildPath "last_logon_users_$currentDateTime.csv"
+$neverLoggedOnReportPath = Join-Path -Path $Config['ReportsPath'] -ChildPath "never_logged_on_users_$currentDateTime.csv"
+$noExpireReportPath = Join-Path -Path $Config['ReportsPath'] -ChildPath "no_expire_users_$currentDateTime.csv"
 $lastLogonUsers | Export-Csv -Path $lastLogonReportPath -NoTypeInformation
 $neverLoggedOnUsers | Export-Csv -Path $neverLoggedOnReportPath -NoTypeInformation
 $noExpireUsers | Export-Csv -Path $noExpireReportPath -NoTypeInformation
 
-# Call the updated Send-Email function with dynamic report paths
+# Assuming reports are generated and saved in the specified ReportsPath
 Send-Email -config $Config -reportsPath $Config['ReportsPath']
+# After reports have been generated and emailed
+Cleanup-OldReports -reportsPath $Config['ReportsPath'] -retentionCount $Config.ReportRetentionCount
