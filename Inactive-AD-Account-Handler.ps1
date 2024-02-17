@@ -56,7 +56,7 @@ function Get-LastLogonFromAllDCs {
         [string]$userName
     )
 
-
+    # Fetch all domain controllers, excluding the ones specified in the config
     $domainControllers = Get-ADDomainController -Filter * | Where-Object {
         $Config.DomainControllersToExclude -notcontains $_.HostName -and
         $Config.DomainControllersToExclude -notcontains $_.Name
@@ -70,10 +70,12 @@ function Get-LastLogonFromAllDCs {
                 $lastLogon = $userLastLogon
             }
         } catch {
+            # Optionally log errors or take other actions when a DC is not accessible
         }
     }
 
     if ($lastLogon -eq 0) {
+        # Consider handling or logging the case where no logon data was found
     } else {
         $logonDate = [DateTime]::FromFileTime($lastLogon).ToString("yyyy-MM-dd HH:mm:ss")
     }
@@ -84,35 +86,46 @@ function Get-LastLogonFromAllDCs {
 # Function to get domain users with last logon
 function Get-DomainUsersWithLastLogon {
     param(
-        [array]$users
+        [array]$users,
+        [int]$inactiveDaysThreshold  # Parameter for the inactive days threshold
     )
 
     $filteredUsers = foreach ($user in $users) {
-        # Get the most recent LastLogon from all DCs
-        $lastLogon = Get-LastLogonFromAllDCs -userName $user.SamAccountName
+        # Check if the user is in any of the OUs to exclude for last logon checks
+        if (-not (IsUserInExcludedOUs -distinguishedName $user.DistinguishedName -OUsToExclude $Config.OUsToExclude_Lastlogon)) {
+            $lastLogon = Get-LastLogonFromAllDCs -userName $user.SamAccountName
 
-        # If no LastLogon data was found, it's possible the user never logged on, or the data is unavailable
-        # Compare LastLogonTimestamp and LastLogon to find the most recent
-        if ($lastLogon -eq 0) {
-            $mostRecentLogon = [DateTime]::FromFileTime($user.LastLogonTimestamp)
-        } else {
-            $lastLogonDateTime = [DateTime]::FromFileTime($lastLogon)
-            $lastLogonTimestampDateTime = [DateTime]::FromFileTime($user.LastLogonTimestamp)
-            if ([DateTime]::Compare($lastLogonDateTime, $lastLogonTimestampDateTime) -gt 0) {
-                $mostRecentLogon = $lastLogonDateTime
+            # Initialize the most recent logon time
+            $mostRecentLogon = $null
+
+            # Convert lastLogon to DateTime, if it's not 0; otherwise, use LastLogonTimestamp
+            if ($lastLogon -eq 0) {
+                if ($user.LastLogonTimestamp -ne $null) {
+                    $mostRecentLogon = [DateTime]::FromFileTime($user.LastLogonTimestamp)
+                }
             } else {
-                $mostRecentLogon = $lastLogonTimestampDateTime
+                $mostRecentLogon = [DateTime]::FromFileTime($lastLogon)
             }
-        }
 
-        [PSCustomObject]@{
-            SamAccountName = $user.SamAccountName
-            MostRecentLogon = $mostRecentLogon
+            # Check if the most recent logon is defined and older than the inactive threshold
+            if ($mostRecentLogon -ne $null) {
+                $currentDate = Get-Date
+                $inactiveDateThreshold = $currentDate.AddDays(-$inactiveDaysThreshold)
+
+                if ($mostRecentLogon -lt $inactiveDateThreshold) {
+                    [PSCustomObject]@{
+                        SamAccountName    = $user.SamAccountName
+                        DistinguishedName = $user.DistinguishedName
+                        MostRecentLogon   = $mostRecentLogon
+                    }
+                }
+            }
         }
     }
 
     return $filteredUsers
 }
+
 
 # Function to get domain users that have never logged in
 function Get-NeverLoggedOnADUsers {
@@ -120,7 +133,10 @@ function Get-NeverLoggedOnADUsers {
         [array]$users
     )
 
-    $neverLoggedOnUsers = $users | Where-Object { $_.LastLogonTimestamp -eq $null } | ForEach-Object {
+    $neverLoggedOnUsers = $users | Where-Object {
+        $_.LastLogonTimestamp -eq $null -and
+        -not (IsUserInExcludedOUs -distinguishedName $_.DistinguishedName -OUsToExclude $Config.OUsToExclude_NeverLoggedOnADUsers)
+    } | ForEach-Object {
         [PSCustomObject]@{
             SamAccountName    = $_.SamAccountName
             DistinguishedName = $_.DistinguishedName
@@ -129,13 +145,18 @@ function Get-NeverLoggedOnADUsers {
 
     return $neverLoggedOnUsers
 }
+
+
 # Function to get users with no password expiration
 function Get-UsersWithNoExpire {
     param(
         [array]$users
     )
 
-    $noExpireUsers = $users | Where-Object { $_.PasswordNeverExpires -eq $true } | ForEach-Object {
+    $noExpireUsers = $users | Where-Object {
+        $_.PasswordNeverExpires -eq $true -and
+        -not (IsUserInExcludedOUs -distinguishedName $_.DistinguishedName -OUsToExclude $Config.OUsToExclude_UsersWithNoExpire)
+    } | ForEach-Object {
         [PSCustomObject]@{
             SamAccountName    = $_.SamAccountName
             DistinguishedName = $_.DistinguishedName
@@ -217,12 +238,60 @@ function Send-Email {
 }
 
 $allUsers = Get-ADUsers -config $Config
-$lastLogonUsers = Get-DomainUsersWithLastLogon -users $allUsers
+$lastLogonUsers = Get-DomainUsersWithLastLogon -users $allUsers -inactiveDaysThreshold $Config.InactiveDaysThreshold
 $neverLoggedOnUsers = Get-NeverLoggedOnADUsers -users $allUsers
 $noExpireUsers = Get-UsersWithNoExpire -users $allUsers
 
+
 # Current date in a specific format (e.g., YYYY-MM-DD)
 $currentDate = Get-Date -Format "yyyy-MM-dd"
+
+# Process users who have not logged in within the threshold
+foreach ($user in $lastLogonUsers) {
+    if ($Config.WhatIfMode) {
+        # If WhatIfMode is true, use the -WhatIf parameter
+        Disable-ADAccount -Identity $user.SamAccountName -ErrorAction SilentlyContinue -WhatIf
+        Move-ADObject -Identity $user.DistinguishedName -TargetPath $Config.TargetOU -ErrorAction SilentlyContinue -WhatIf
+    } else {
+        # If WhatIfMode is false, execute without -WhatIf
+        Disable-ADAccount -Identity $user.SamAccountName -ErrorAction SilentlyContinue
+        Move-ADObject -Identity $user.DistinguishedName -TargetPath $Config.TargetOU -ErrorAction SilentlyContinue
+    }
+}
+
+# Adjust the message based on WhatIfMode
+if ($Config.WhatIfMode) {
+    Write-Output "User processing (disable and move) simulated with -WhatIf. Review the output."
+} else {
+    Write-Output "User processing (disable and move) executed."
+}
+
+# Assuming $neverLoggedOnUsers contains the users who have never logged in
+if ($Config.DisableNeverLoggedOn) {
+    foreach ($user in $neverLoggedOnUsers) {
+        if ($Config.WhatIfMode) {
+            # Simulate disabling if WhatIfMode is true
+            Disable-ADAccount -Identity $user.SamAccountName -ErrorAction SilentlyContinue -WhatIf
+        } else {
+            # Actually disable the account if WhatIfMode is false
+            Disable-ADAccount -Identity $user.SamAccountName -ErrorAction SilentlyContinue
+        }
+
+        # Optionally, move the disabled accounts to TargetOU (if required)
+        # Check and implement based on your organizational policies
+        if (-not $Config.WhatIfMode) {
+            Move-ADObject -Identity $user.DistinguishedName -TargetPath $Config.TargetOU -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Log or print a message indicating that never logged on user processing is complete
+    if ($Config.WhatIfMode) {
+        Write-Output "Simulation: Never logged on user accounts would be disabled."
+    } else {
+        Write-Output "Never logged on user accounts have been disabled."
+    }
+}
+
 
 # Exporting reports with date included in the filename
 $lastLogonReportPath = Join-Path -Path $Config['ReportsPath'] -ChildPath "last_logon_users_$currentDate.csv"
