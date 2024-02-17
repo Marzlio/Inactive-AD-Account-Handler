@@ -8,7 +8,6 @@ This PowerShell script, `Inactive-AD-Account-Handler.ps1`, automates the managem
 - **Customizable Inactivity Threshold**: Set a custom threshold for inactivity to identify inactive accounts.
 - **Exclusion List**: Specify OUs from which users should not be disabled, protecting critical accounts.
 - **Email Reporting**: Automatically generate and send reports detailing disabled accounts and encountered errors.
-- **Read-Only Mode**: Generate reports without making changes, perfect for audit and compliance reviews.
 - **Logging**: Maintain detailed logs of actions taken and errors encountered for audit purposes.
 
 ## Prerequisites
@@ -33,26 +32,26 @@ Before running this script, ensure you have:
 
 ## Configuration
 
-Customize the script's behavior by modifying parameters within the `$Config` hashtable:
+The script's behavior can be customized by adjusting parameters within the `$Config` hashtable in the script. Below is a description of each configuration option:
 
-- `Domain`, `ExcludeOU`, `TargetOU`: Define LDAP paths for the domain and organizational units.
-- `SMTPServer`, `FromEmail`, `ToEmail`: Set up email notification details.
-- `DisableThresholdDays`: Define the inactivity threshold for disabling accounts.
+- `OUsToInclude`: Specifies the Organizational Units (OUs) from which users will be evaluated. Example: `@("OU=Users,DC=example,DC=com")`.
+- `OUsToExclude`: OUs that should be excluded from the script's operations, preventing users within these OUs from being processed. Example: `@("OU=VIP,DC=example,DC=com")`.
+- `TargetOU`: The Organizational Unit to which disabled accounts will be moved. Specify the LDAP path. Example: `"OU=DisabledAccounts,DC=example,DC=com"`.
+- `InactiveDaysThreshold`: Number of days of inactivity after which a user account is considered inactive and subject to processing. Example: `15`.
+- `DisableNeverLoggedOn`: If set to `$true`, accounts that have never logged on will be disabled. Set to `$false` to skip this action.
+- `WhatIfMode`: Enables a simulation mode where no changes are made to Active Directory. Useful for planning and testing. Set to `$false` to apply changes.
+- `DomainControllersToExclude`: Specifies domain controllers to exclude from the script's operations, useful in large environments or when certain DCs are unreachable. Example: `@("DC01.example.com", "DC02.example.com")`.
+- `SMTPServer`: The address of the SMTP server used for sending email notifications. Example: `"smtp.example.com"`.
+- `SMTPPort`: The port used by the SMTP server. Common ports are 587 for TLS/StartTLS and 465 for SSL.
+- `UseSSL`: Specifies whether SSL/TLS is used for the SMTP connection. Set to `$true` for SSL/TLS.
+- `SMTPUsername` and `SMTPPassword`: Credentials for SMTP server authentication. Consider securely handling the password.
+- `FromEmail` and `ToEmail`: Email addresses for the sender and recipient(s) of the report, respectively.
+- `EmailSubject`: Subject line for the email report sent by the script.
+- `ReportRetentionCount`: The number of recent reports to retain. Older reports beyond this count will be deleted.
+- `GeneralLogPath` and `ErrorLogPath`: Specifies paths for general and error logs, respectively, aiding in troubleshooting and audit.
 
-## Detailed Usage
+Ensure to review and adjust these settings according to your environment's requirements and security policies.
 
-Execute the script in PowerShell with administrative privileges. You can run the script with default settings or specify parameters for customization:
-
-```powershell
-.\Inactive-AD-Account-Handler.ps1 -DisableThresholdDays 30 -LogChanges
-```
-
-### Parameters
-
-- `-Domain <string>`: LDAP path for the domain.
-- `-ExcludeOU <string>`: OU to exclude from processing.
-- Additional parameters include `SMTPServer`, `FromEmail`, and `ToEmail` for detailed control over script operation.
-- `WhatIf`: Simulate script execution without making changes.
 
 ## Troubleshooting
 
