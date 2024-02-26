@@ -152,7 +152,6 @@ function Get-DomainUsersWithLastLogon {
     return $filteredUsers
 }
 
-
 # Function to get domain users that have never logged in
 function Get-NeverLoggedOnADUsers {
     param(
