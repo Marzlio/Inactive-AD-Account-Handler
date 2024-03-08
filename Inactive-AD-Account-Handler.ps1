@@ -73,7 +73,6 @@ function Get-ADUsers {
     return $allUsers
 }
 
-
 function Get-LastLogonFromAllDCs {
     param(
         [string]$userName
